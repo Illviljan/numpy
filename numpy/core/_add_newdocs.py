@@ -328,7 +328,7 @@ add_newdoc('numpy.core', 'nditer',
     ...     with it:
     ...         for (a, b, c) in it:
     ...             addop(a, b, out=c)
-    ...     return it.operands[2]
+    ...         return it.operands[2]
 
     Here is the same function, but following the C-style pattern:
 
@@ -478,7 +478,7 @@ add_newdoc('numpy.core', 'nditer', ('iternext',
 
 add_newdoc('numpy.core', 'nditer', ('remove_axis',
     """
-    remove_axis(i)
+    remove_axis(i, /)
 
     Removes axis `i` from the iterator. Requires that the flag "multi_index"
     be enabled.
@@ -504,6 +504,9 @@ add_newdoc('numpy.core', 'nditer', ('reset',
 
 add_newdoc('numpy.core', 'nested_iters',
     """
+    nested_iters(op, axes, flags=None, op_flags=None, op_dtypes=None, \
+    order="K", casting="safe", buffersize=0)
+
     Create nditers for use in nested loops
 
     Create a tuple of `nditer` objects which iterate in nested loops over
@@ -796,7 +799,7 @@ add_newdoc('numpy.core.multiarray', 'array',
     object : array_like
         An array, any object exposing the array interface, an object whose
         __array__ method returns an array, or any (nested) sequence.
-        If object is a scalar, a 0-dimensional array containing object is 
+        If object is a scalar, a 0-dimensional array containing object is
         returned.
     dtype : data-type, optional
         The desired data-type for the array.  If not given, then the type will
@@ -1570,6 +1573,19 @@ add_newdoc('numpy.core.multiarray', 'frombuffer',
         array_function_like_doc,
     ))
 
+add_newdoc('numpy.core.multiarray', '_from_dlpack',
+    """
+    _from_dlpack(x, /)
+
+    Create a NumPy array from an object implementing the ``__dlpack__``
+    protocol.
+
+    See Also
+    --------
+    `Array API documentation
+    <https://data-apis.org/array-api/latest/design_topics/data_interchange.html#syntax-for-data-interchange-with-dlpack>`_
+    """)
+
 add_newdoc('numpy.core', 'fastCopyAndTranspose',
     """_fastCopyAndTranspose(a)""")
 
@@ -2201,8 +2217,8 @@ add_newdoc('numpy.core.multiarray', 'ndarray',
     empty : Create an array, but leave its allocated memory unchanged (i.e.,
             it contains "garbage").
     dtype : Create a data-type.
-    numpy.typing.NDArray : A :term:`generic <generic type>` version
-                           of ndarray.
+    numpy.typing.NDArray : An ndarray alias :term:`generic <generic type>`
+                           w.r.t. its `dtype.type <numpy.dtype.type>`.
 
     Notes
     -----
@@ -2260,6 +2276,15 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('__array_priority__',
 add_newdoc('numpy.core.multiarray', 'ndarray', ('__array_struct__',
     """Array protocol: C-struct side."""))
 
+add_newdoc('numpy.core.multiarray', 'ndarray', ('__dlpack__',
+    """a.__dlpack__(*, stream=None)
+    
+    DLPack Protocol: Part of the Array API."""))
+
+add_newdoc('numpy.core.multiarray', 'ndarray', ('__dlpack_device__',
+    """a.__dlpack_device__()
+    
+    DLPack Protocol: Part of the Array API."""))
 
 add_newdoc('numpy.core.multiarray', 'ndarray', ('base',
     """
@@ -2452,11 +2477,6 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('flags',
         This array is a copy of some other array. The C-API function
         PyArray_ResolveWritebackIfCopy must be called before deallocating
         to the base array will be updated with the contents of this array.
-    UPDATEIFCOPY (U)
-        (Deprecated, use WRITEBACKIFCOPY) This array is a copy of some other array.
-        When this array is
-        deallocated, the base array will be updated with the contents of
-        this array.
     FNC
         F_CONTIGUOUS and not C_CONTIGUOUS.
     FORC
@@ -2474,13 +2494,12 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('flags',
     or by using lowercased attribute names (as in ``a.flags.writeable``). Short flag
     names are only supported in dictionary access.
 
-    Only the WRITEBACKIFCOPY, UPDATEIFCOPY, WRITEABLE, and ALIGNED flags can be
+    Only the WRITEBACKIFCOPY, WRITEABLE, and ALIGNED flags can be
     changed by the user, via direct assignment to the attribute or dictionary
     entry, or by calling `ndarray.setflags`.
 
     The array flags cannot be set arbitrarily:
 
-    - UPDATEIFCOPY can only be set ``False``.
     - WRITEBACKIFCOPY can only be set ``False``.
     - ALIGNED can only be set ``True`` if the data is truly aligned.
     - WRITEABLE can only be set ``True`` if the array owns its own memory
@@ -2633,8 +2652,9 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('shape',
 
     See Also
     --------
-    numpy.reshape : similar function
-    ndarray.reshape : similar method
+    numpy.shape : Equivalent getter function.
+    numpy.reshape : Function similar to setting ``shape``.
+    ndarray.reshape : Method similar to setting ``shape``.
 
     """))
 
@@ -2794,6 +2814,39 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('__copy__',
     Used if :func:`copy.copy` is called on an array. Returns a copy of the array.
 
     Equivalent to ``a.copy(order='K')``.
+
+    """))
+
+
+add_newdoc('numpy.core.multiarray', 'ndarray', ('__class_getitem__',
+    """a.__class_getitem__(item, /)
+
+    Return a parametrized wrapper around the `~numpy.ndarray` type.
+
+    .. versionadded:: 1.22
+
+    Returns
+    -------
+    alias : types.GenericAlias
+        A parametrized `~numpy.ndarray` type.
+
+    Examples
+    --------
+    >>> from typing import Any
+    >>> import numpy as np
+
+    >>> np.ndarray[Any, np.dtype[Any]]
+    numpy.ndarray[typing.Any, numpy.dtype[typing.Any]]
+
+    Notes
+    -----
+    This method is only available for python 3.9 and later.
+
+    See Also
+    --------
+    :pep:`585` : Type hinting generics in standard collections.
+    numpy.typing.NDArray : An ndarray alias :term:`generic <generic type>`
+                        w.r.t. its `dtype.type <numpy.dtype.type>`.
 
     """))
 
@@ -3541,7 +3594,7 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('newbyteorder',
         * 'S' - swap dtype from current to opposite endian
         * {'<', 'little'} - little endian
         * {'>', 'big'} - big endian
-        * '=' - native order, equivalent to `sys.byteorder`
+        * {'=', 'native'} - native order, equivalent to `sys.byteorder`
         * {'|', 'I'} - ignore (no change to byte order)
 
         The default value ('S') results in swapping the current
@@ -3848,13 +3901,13 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('setflags',
     """
     a.setflags(write=None, align=None, uic=None)
 
-    Set array flags WRITEABLE, ALIGNED, (WRITEBACKIFCOPY and UPDATEIFCOPY),
+    Set array flags WRITEABLE, ALIGNED, WRITEBACKIFCOPY,
     respectively.
 
     These Boolean-valued flags affect how numpy interprets the memory
     area used by `a` (see Notes below). The ALIGNED flag can only
     be set to True if the data is actually aligned according to the type.
-    The WRITEBACKIFCOPY and (deprecated) UPDATEIFCOPY flags can never be set
+    The WRITEBACKIFCOPY and flag can never be set
     to True. The flag WRITEABLE can only be set to True if the array owns its
     own memory, or the ultimate owner of the memory exposes a writeable buffer
     interface, or is a string. (The exception for string is made so that
@@ -3874,14 +3927,12 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('setflags',
     Array flags provide information about how the memory area used
     for the array is to be interpreted. There are 7 Boolean flags
     in use, only four of which can be changed by the user:
-    WRITEBACKIFCOPY, UPDATEIFCOPY, WRITEABLE, and ALIGNED.
+    WRITEBACKIFCOPY, WRITEABLE, and ALIGNED.
 
     WRITEABLE (W) the data area can be written to;
 
     ALIGNED (A) the data and strides are aligned appropriately for the hardware
     (as determined by the compiler);
-
-    UPDATEIFCOPY (U) (deprecated), replaced by WRITEBACKIFCOPY;
 
     WRITEBACKIFCOPY (X) this array is a copy of some other array (referenced
     by .base). When the C-API function PyArray_ResolveWritebackIfCopy is
@@ -3906,7 +3957,6 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('setflags',
       WRITEABLE : True
       ALIGNED : True
       WRITEBACKIFCOPY : False
-      UPDATEIFCOPY : False
     >>> y.setflags(write=0, align=0)
     >>> y.flags
       C_CONTIGUOUS : True
@@ -3915,7 +3965,6 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('setflags',
       WRITEABLE : False
       ALIGNED : False
       WRITEBACKIFCOPY : False
-      UPDATEIFCOPY : False
     >>> y.setflags(uic=1)
     Traceback (most recent call last):
       File "<stdin>", line 1, in <module>
@@ -4008,6 +4057,9 @@ add_newdoc('numpy.core.multiarray', 'ndarray', ('partition',
         The order of all elements in the partitions is undefined.
         If provided with a sequence of kth it will partition all elements
         indexed by kth of them into their sorted position at once.
+
+        .. deprecated:: 1.22.0
+            Passing booleans as index is deprecated.
     axis : int, optional
         Axis along which to sort. Default is -1, which means sort along the
         last axis.
@@ -4686,6 +4738,26 @@ add_newdoc('numpy.core.umath', '_add_newdoc_ufunc',
     be a problem if the user is repeatedly creating ufuncs with
     no documentation, adding documentation via add_newdoc_ufunc,
     and then throwing away the ufunc.
+    """)
+
+add_newdoc('numpy.core.multiarray', 'get_handler_name',
+    """
+    get_handler_name(a: ndarray) -> str,None
+
+    Return the name of the memory handler used by `a`. If not provided, return
+    the name of the memory handler that will be used to allocate data for the
+    next `ndarray` in this context. May return None if `a` does not own its
+    memory, in which case you can traverse ``a.base`` for a memory handler.
+    """)
+
+add_newdoc('numpy.core.multiarray', 'get_handler_version',
+    """
+    get_handler_version(a: ndarray) -> int,None
+
+    Return the version of the memory handler used by `a`. If not provided,
+    return the version of the memory handler that will be used to allocate data
+    for the next `ndarray` in this context. May return None if `a` does not own
+    its memory, in which case you can traverse ``a.base`` for a memory handler.
     """)
 
 add_newdoc('numpy.core.multiarray', '_set_madvise_hugepage',
@@ -6001,7 +6073,7 @@ add_newdoc('numpy.core.multiarray', 'dtype', ('newbyteorder',
         * 'S' - swap dtype from current to opposite endian
         * {'<', 'little'} - little endian
         * {'>', 'big'} - big endian
-        * '=' - native order
+        * {'=', 'native'} - native order
         * {'|', 'I'} - ignore (no change to byte order)
 
     Returns
@@ -6044,6 +6116,97 @@ add_newdoc('numpy.core.multiarray', 'dtype', ('newbyteorder',
 
     """))
 
+add_newdoc('numpy.core.multiarray', 'dtype', ('__class_getitem__',
+    """
+    __class_getitem__(item, /)
+
+    Return a parametrized wrapper around the `~numpy.dtype` type.
+
+    .. versionadded:: 1.22
+
+    Returns
+    -------
+    alias : types.GenericAlias
+        A parametrized `~numpy.dtype` type.
+
+    Examples
+    --------
+    >>> import numpy as np
+
+    >>> np.dtype[np.int64]
+    numpy.dtype[numpy.int64]
+
+    Notes
+    -----
+    This method is only available for python 3.9 and later.
+
+    See Also
+    --------
+    :pep:`585` : Type hinting generics in standard collections.
+
+    """))
+
+add_newdoc('numpy.core.multiarray', 'dtype', ('__ge__',
+    """
+    __ge__(value, /)
+
+    Return ``self >= value``.
+
+    Equivalent to ``np.can_cast(value, self, casting="safe")``.
+
+    See Also
+    --------
+    can_cast : Returns True if cast between data types can occur according to
+               the casting rule.
+
+    """))
+
+add_newdoc('numpy.core.multiarray', 'dtype', ('__le__',
+    """
+    __le__(value, /)
+
+    Return ``self <= value``.
+
+    Equivalent to ``np.can_cast(self, value, casting="safe")``.
+
+    See Also
+    --------
+    can_cast : Returns True if cast between data types can occur according to
+               the casting rule.
+
+    """))
+
+add_newdoc('numpy.core.multiarray', 'dtype', ('__gt__',
+    """
+    __ge__(value, /)
+
+    Return ``self > value``.
+
+    Equivalent to
+    ``self != value and np.can_cast(value, self, casting="safe")``.
+
+    See Also
+    --------
+    can_cast : Returns True if cast between data types can occur according to
+               the casting rule.
+
+    """))
+
+add_newdoc('numpy.core.multiarray', 'dtype', ('__lt__',
+    """
+    __lt__(value, /)
+
+    Return ``self < value``.
+
+    Equivalent to
+    ``self != value and np.can_cast(self, value, casting="safe")``.
+
+    See Also
+    --------
+    can_cast : Returns True if cast between data types can occur according to
+               the casting rule.
+
+    """))
 
 ##############################################################################
 #
@@ -6372,7 +6535,7 @@ add_newdoc('numpy.core.numerictypes', 'generic', ('newbyteorder',
     * 'S' - swap dtype from current to opposite endian
     * {'<', 'little'} - little endian
     * {'>', 'big'} - big endian
-    * '=' - native order
+    * {'=', 'native'} - native order
     * {'|', 'I'} - ignore (no change to byte order)
 
     Parameters
@@ -6465,6 +6628,36 @@ add_newdoc('numpy.core.numerictypes', 'generic',
 add_newdoc('numpy.core.numerictypes', 'generic',
            refer_to_array_attribute('view'))
 
+add_newdoc('numpy.core.numerictypes', 'number', ('__class_getitem__',
+    """
+    __class_getitem__(item, /)
+
+    Return a parametrized wrapper around the `~numpy.number` type.
+
+    .. versionadded:: 1.22
+
+    Returns
+    -------
+    alias : types.GenericAlias
+        A parametrized `~numpy.number` type.
+
+    Examples
+    --------
+    >>> from typing import Any
+    >>> import numpy as np
+
+    >>> np.signedinteger[Any]
+    numpy.signedinteger[typing.Any]
+
+    Notes
+    -----
+    This method is only available for python 3.9 and later.
+
+    See Also
+    --------
+    :pep:`585` : Type hinting generics in standard collections.
+
+    """))
 
 ##############################################################################
 #

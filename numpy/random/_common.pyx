@@ -5,6 +5,7 @@ from cpython cimport PyFloat_AsDouble
 import sys
 import numpy as np
 cimport numpy as np
+cimport numpy.math as npmath
 
 from libc.stdint cimport uintptr_t
 
@@ -171,8 +172,23 @@ cdef object prepare_ctypes(bitgen_t *bitgen):
     return _ctypes
 
 cdef double kahan_sum(double *darr, np.npy_intp n):
+    """
+    Parameters
+    ----------
+    darr : reference to double array
+        Address of values to sum
+    n : intp
+        Length of d
+    
+    Returns
+    -------
+    float
+        The sum. 0.0 if n <= 0.
+    """
     cdef double c, y, t, sum
     cdef np.npy_intp i
+    if n <= 0:
+        return 0.0
     sum = darr[0]
     c = 0.0
     for i in range(1, n):
@@ -383,10 +399,10 @@ cdef int check_array_constraint(np.ndarray val, object name, constraint_type con
 cdef int check_constraint(double val, object name, constraint_type cons) except -1:
     cdef bint is_nan
     if cons == CONS_NON_NEGATIVE:
-        if not np.isnan(val) and np.signbit(val):
+        if not npmath.isnan(val) and npmath.signbit(val):
             raise ValueError(name + " < 0")
     elif cons == CONS_POSITIVE or cons == CONS_POSITIVE_NOT_NAN:
-        if cons == CONS_POSITIVE_NOT_NAN and np.isnan(val):
+        if cons == CONS_POSITIVE_NOT_NAN and npmath.isnan(val):
             raise ValueError(name + " must not be NaN")
         elif val <= 0:
             raise ValueError(name + " <= 0")

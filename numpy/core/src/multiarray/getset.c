@@ -384,15 +384,22 @@ array_data_set(PyArrayObject *self, PyObject *op, void *NPY_UNUSED(ignored))
     }
     if (PyArray_FLAGS(self) & NPY_ARRAY_OWNDATA) {
         PyArray_XDECREF(self);
-        PyDataMem_FREE(PyArray_DATA(self));
+        size_t nbytes = PyArray_NBYTES_ALLOCATED(self);
+        PyObject *handler = PyArray_HANDLER(self);
+        if (handler == NULL) {
+            /* This can happen if someone arbitrarily sets NPY_ARRAY_OWNDATA */
+            PyErr_SetString(PyExc_RuntimeError,
+                            "no memory handler found but OWNDATA flag set");
+            return -1;
+        }
+        PyDataMem_UserFREE(PyArray_DATA(self), nbytes, handler);
+        Py_CLEAR(((PyArrayObject_fields *)self)->mem_handler);
     }
     if (PyArray_BASE(self)) {
-        if ((PyArray_FLAGS(self) & NPY_ARRAY_WRITEBACKIFCOPY) ||
-            (PyArray_FLAGS(self) & NPY_ARRAY_UPDATEIFCOPY)) {
+        if (PyArray_FLAGS(self) & NPY_ARRAY_WRITEBACKIFCOPY) {
             PyArray_ENABLEFLAGS((PyArrayObject *)PyArray_BASE(self),
                                                 NPY_ARRAY_WRITEABLE);
             PyArray_CLEARFLAGS(self, NPY_ARRAY_WRITEBACKIFCOPY);
-            PyArray_CLEARFLAGS(self, NPY_ARRAY_UPDATEIFCOPY);
         }
         Py_DECREF(PyArray_BASE(self));
         ((PyArrayObject_fields *)self)->base = NULL;
@@ -617,7 +624,7 @@ array_struct_get(PyArrayObject *self, void *NPY_UNUSED(ignored))
         inter->flags = inter->flags & ~NPY_ARRAY_WRITEABLE;
     }
     /* reset unused flags */
-    inter->flags &= ~(NPY_ARRAY_WRITEBACKIFCOPY | NPY_ARRAY_UPDATEIFCOPY |NPY_ARRAY_OWNDATA);
+    inter->flags &= ~(NPY_ARRAY_WRITEBACKIFCOPY | NPY_ARRAY_OWNDATA);
     if (PyArray_ISNOTSWAPPED(self)) inter->flags |= NPY_ARRAY_NOTSWAPPED;
     /*
      * Copy shape and strides over since these can be reset

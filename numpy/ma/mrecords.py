@@ -493,7 +493,6 @@ def _mrreconstruct(subtype, baseclass, baseshape, basetype,):
     _mask = ndarray.__new__(ndarray, baseshape, 'b1')
     return subtype.__new__(subtype, _data, mask=_mask, dtype=basetype,)
 
-
 mrecarray = MaskedRecords
 
 
@@ -668,7 +667,8 @@ def openfile(fname):
 
 
 def fromtextfile(fname, delimiter=None, commentchar='#', missingchar='',
-                 varnames=None, vartypes=None):
+                 varnames=None, vartypes=None,
+                 *, delimitor=np._NoValue):  # backwards compatibility
     """
     Creates a mrecarray from data stored in the file `filename`.
 
@@ -692,6 +692,17 @@ def fromtextfile(fname, delimiter=None, commentchar='#', missingchar='',
 
 
     Ultra simple: the varnames are in the header, one line"""
+    if delimitor is not np._NoValue:
+        if delimiter is not None:
+            raise TypeError("fromtextfile() got multiple values for argument "
+                            "'delimiter'")
+        # NumPy 1.22.0, 2021-09-23
+        warnings.warn("The 'delimitor' keyword argument of "
+                      "numpy.ma.mrecords.fromtextfile() is deprecated "
+                      "since NumPy 1.22.0, use 'delimiter' instead.",
+                      DeprecationWarning, stacklevel=2)
+        delimiter = delimitor
+
     # Try to open the file.
     ftext = openfile(fname)
 

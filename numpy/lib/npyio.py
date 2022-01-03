@@ -285,7 +285,8 @@ def load(file, mmap_mode=None, allow_pickle=False, fix_imports=True,
     ----------
     file : file-like object, string, or pathlib.Path
         The file to read. File-like objects must support the
-        ``seek()`` and ``read()`` methods. Pickled files require that the
+        ``seek()`` and ``read()`` methods and must always 
+        be opened in binary mode.  Pickled files require that the
         file-like object support the ``readline()`` method as well.
     mmap_mode : {None, 'r+', 'r', 'w+', 'c'}, optional
         If not None, then memory-map the file, using the given mode (see
@@ -815,6 +816,38 @@ def _loadtxt_pack_items(packing, items):
             start += length
         return tuple(ret)
 
+def _ensure_ndmin_ndarray_check_param(ndmin):
+    """Just checks if the param ndmin is supported on
+        _ensure_ndmin_ndarray. Is intented to be used as
+        verification before running anything expensive.
+        e.g. loadtxt, genfromtxt
+    """
+    # Check correctness of the values of `ndmin`
+    if ndmin not in [0, 1, 2]:
+        raise ValueError(f"Illegal value of ndmin keyword: {ndmin}")
+
+def _ensure_ndmin_ndarray(a, *, ndmin: int):
+    """This is a helper function of loadtxt and genfromtxt to ensure
+        proper minimum dimension as requested
+
+        ndim: int. Supported values 1, 2, 3
+                   ^^ whenever this changes, keep in sync with
+                      _ensure_ndmin_ndarray_check_param
+    """
+    # Verify that the array has at least dimensions `ndmin`.
+    # Tweak the size and shape of the arrays - remove extraneous dimensions
+    if a.ndim > ndmin:
+        a = np.squeeze(a)
+    # and ensure we have the minimum number of dimensions asked for
+    # - has to be in this order for the odd case ndmin=1, a.squeeze().ndim=0
+    if a.ndim < ndmin:
+        if ndmin == 1:
+            a = np.atleast_1d(a)
+        elif ndmin == 2:
+            a = np.atleast_2d(a).T
+
+    return a
+
 
 # amount of lines loadtxt reads in one chunk, can be overridden for testing
 _loadtxt_chunksize = 50000
@@ -982,9 +1015,7 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
     # Main body of loadtxt.
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-    # Check correctness of the values of `ndmin`
-    if ndmin not in [0, 1, 2]:
-        raise ValueError('Illegal value of ndmin keyword: %s' % ndmin)
+    _ensure_ndmin_ndarray_check_param(ndmin)
 
     # Type conversions for Py3 convenience
     if comments is not None:
@@ -1181,17 +1212,7 @@ def loadtxt(fname, dtype=float, comments='#', delimiter=None,
     if X.ndim == 3 and X.shape[:2] == (1, 1):
         X.shape = (1, -1)
 
-    # Verify that the array has at least dimensions `ndmin`.
-    # Tweak the size and shape of the arrays - remove extraneous dimensions
-    if X.ndim > ndmin:
-        X = np.squeeze(X)
-    # and ensure we have the minimum number of dimensions asked for
-    # - has to be in this order for the odd case ndmin=1, X.squeeze().ndim=0
-    if X.ndim < ndmin:
-        if ndmin == 1:
-            X = np.atleast_1d(X)
-        elif ndmin == 2:
-            X = np.atleast_2d(X).T
+    X = _ensure_ndmin_ndarray(X, ndmin=ndmin)
 
     if unpack:
         if len(dtype_types) > 1:
@@ -1572,8 +1593,8 @@ def _genfromtxt_dispatcher(fname, dtype=None, comments=None, delimiter=None,
                            names=None, excludelist=None, deletechars=None,
                            replace_space=None, autostrip=None, case_sensitive=None,
                            defaultfmt=None, unpack=None, usemask=None, loose=None,
-                           invalid_raise=None, max_rows=None, encoding=None, *,
-                           like=None):
+                           invalid_raise=None, max_rows=None, encoding=None,
+                           *, ndmin=None, like=None):
     return (like,)
 
 
@@ -1586,8 +1607,8 @@ def genfromtxt(fname, dtype=float, comments='#', delimiter=None,
                deletechars=''.join(sorted(NameValidator.defaultdeletechars)),
                replace_space='_', autostrip=False, case_sensitive=True,
                defaultfmt="f%i", unpack=None, usemask=False, loose=True,
-               invalid_raise=True, max_rows=None, encoding='bytes', *,
-               like=None):
+               invalid_raise=True, max_rows=None, encoding='bytes',
+               *, ndmin=0, like=None):
     """
     Load data from a text file, with missing values handled as specified.
 
@@ -1686,6 +1707,10 @@ def genfromtxt(fname, dtype=float, comments='#', delimiter=None,
         to None the system default is used. The default value is 'bytes'.
 
         .. versionadded:: 1.14.0
+    ndmin : int, optional
+        Same parameter as `loadtxt`
+
+        .. versionadded:: 1.23.0
     ${ARRAY_FUNCTION_LIKE}
 
         .. versionadded:: 1.20.0
@@ -1779,8 +1804,11 @@ def genfromtxt(fname, dtype=float, comments='#', delimiter=None,
             case_sensitive=case_sensitive, defaultfmt=defaultfmt,
             unpack=unpack, usemask=usemask, loose=loose,
             invalid_raise=invalid_raise, max_rows=max_rows, encoding=encoding,
+            ndmin=ndmin,
             like=like
         )
+
+    _ensure_ndmin_ndarray_check_param(ndmin)
 
     if max_rows is not None:
         if skip_footer:
@@ -1806,22 +1834,21 @@ def genfromtxt(fname, dtype=float, comments='#', delimiter=None,
         byte_converters = False
 
     # Initialize the filehandle, the LineSplitter and the NameValidator
+    if isinstance(fname, os_PathLike):
+        fname = os_fspath(fname)
+    if isinstance(fname, str):
+        fid = np.lib._datasource.open(fname, 'rt', encoding=encoding)
+        fid_ctx = contextlib.closing(fid)
+    else:
+        fid = fname
+        fid_ctx = contextlib.nullcontext(fid)
     try:
-        if isinstance(fname, os_PathLike):
-            fname = os_fspath(fname)
-        if isinstance(fname, str):
-            fid = np.lib._datasource.open(fname, 'rt', encoding=encoding)
-            fid_ctx = contextlib.closing(fid)
-        else:
-            fid = fname
-            fid_ctx = contextlib.nullcontext(fid)
         fhd = iter(fid)
     except TypeError as e:
         raise TypeError(
-            f"fname must be a string, filehandle, list of strings,\n"
-            f"or generator. Got {type(fname)} instead."
+            "fname must be a string, a filehandle, a sequence of strings,\n"
+            f"or an iterator of strings. Got {type(fname)} instead."
         ) from e
-
     with fid_ctx:
         split_line = LineSplitter(delimiter=delimiter, comments=comments,
                                   autostrip=autostrip, encoding=encoding)
@@ -2291,7 +2318,9 @@ def genfromtxt(fname, dtype=float, comments='#', delimiter=None,
     if usemask:
         output = output.view(MaskedArray)
         output._mask = outputmask
-    output = np.squeeze(output)
+
+    output = _ensure_ndmin_ndarray(output, ndmin=ndmin)
+
     if unpack:
         if names is None:
             return output.T

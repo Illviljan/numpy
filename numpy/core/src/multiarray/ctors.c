@@ -726,6 +726,7 @@ PyArray_NewFromDescr_int(
     fa->nd = nd;
     fa->dimensions = NULL;
     fa->data = NULL;
+    fa->mem_handler = NULL;
 
     if (data == NULL) {
         fa->flags = NPY_ARRAY_DEFAULT;
@@ -739,7 +740,6 @@ PyArray_NewFromDescr_int(
     }
     else {
         fa->flags = (flags & ~NPY_ARRAY_WRITEBACKIFCOPY);
-        fa->flags &= ~NPY_ARRAY_UPDATEIFCOPY;
     }
     fa->descr = descr;
     fa->base = (PyObject *)NULL;
@@ -753,14 +753,20 @@ PyArray_NewFromDescr_int(
         }
         fa->strides = fa->dimensions + nd;
 
-        /* Copy dimensions, check them, and find total array size `nbytes` */
+        /*
+         * Copy dimensions, check them, and find total array size `nbytes`
+         *
+         * Note that we ignore 0-length dimensions, to match this in the `free`
+         * calls, `PyArray_NBYTES_ALLOCATED` is a private helper matching this
+         * behaviour, but without overflow checking.
+         */
         for (int i = 0; i < nd; i++) {
             fa->dimensions[i] = dims[i];
 
             if (fa->dimensions[i] == 0) {
                 /*
                  * Compare to PyArray_OverflowMultiplyList that
-                 * returns 0 in this case.
+                 * returns 0 in this case. See also `PyArray_NBYTES_ALLOCATED`.
                  */
                 continue;
             }
@@ -805,12 +811,19 @@ PyArray_NewFromDescr_int(
         fa->flags |= NPY_ARRAY_C_CONTIGUOUS|NPY_ARRAY_F_CONTIGUOUS;
     }
 
+
     if (data == NULL) {
+        /* Store the handler in case the default is modified */
+        fa->mem_handler = PyDataMem_GetHandler();
+        if (fa->mem_handler == NULL) {
+            goto fail;
+        }
         /*
          * Allocate something even for zero-space arrays
          * e.g. shape=(0,) -- otherwise buffer exposure
          * (a.data) doesn't work as it should.
          * Could probably just allocate a few bytes here. -- Chuck
+         * Note: always sync this with calls to PyDataMem_UserFREE
          */
         if (nbytes == 0) {
             nbytes = descr->elsize ? descr->elsize : 1;
@@ -820,21 +833,23 @@ PyArray_NewFromDescr_int(
          * which could also be sub-fields of a VOID array
          */
         if (zeroed || PyDataType_FLAGCHK(descr, NPY_NEEDS_INIT)) {
-            data = npy_alloc_cache_zero(nbytes);
+            data = PyDataMem_UserNEW_ZEROED(nbytes, 1, fa->mem_handler);
         }
         else {
-            data = npy_alloc_cache(nbytes);
+            data = PyDataMem_UserNEW(nbytes, fa->mem_handler);
         }
         if (data == NULL) {
             raise_memory_error(fa->nd, fa->dimensions, descr);
             goto fail;
         }
+
         fa->flags |= NPY_ARRAY_OWNDATA;
     }
     else {
+        /* The handlers should never be called in this case */
+        fa->mem_handler = NULL;
         /*
-         * If data is passed in, this object won't own it by default.
-         * Caller must arrange for this to be reset if truly desired
+         * If data is passed in, this object won't own it.
          */
         fa->flags &= ~NPY_ARRAY_OWNDATA;
     }
@@ -902,6 +917,7 @@ PyArray_NewFromDescr_int(
     return (PyObject *)fa;
 
  fail:
+    Py_XDECREF(fa->mem_handler);
     Py_DECREF(fa);
     return NULL;
 }
@@ -1141,6 +1157,16 @@ _array_from_buffer_3118(PyObject *memoryview)
     npy_intp shape[NPY_MAXDIMS], strides[NPY_MAXDIMS];
 
     view = PyMemoryView_GET_BUFFER(memoryview);
+
+    if (view->suboffsets != NULL) {
+        PyErr_SetString(PyExc_BufferError,
+                "NumPy currently does not support importing buffers which "
+                "include suboffsets as they are not compatible with the NumPy"
+                "memory layout without a copy.  Consider copying the original "
+                "before trying to convert it to a NumPy array.");
+        return NULL;
+    }
+
     nd = view->ndim;
     descr = _dtype_from_buffer_3118(memoryview);
 
@@ -1273,6 +1299,7 @@ fail:
  *                       DType may be used, but is not enforced.
  * @param writeable whether the result must be writeable.
  * @param context Unused parameter, must be NULL (should be removed later).
+ * @param never_copy Specifies that a copy is not allowed.
  *
  * @returns The array object, Py_NotImplemented if op is not array-like,
  *          or NULL with an error set. (A new reference to Py_NotImplemented
@@ -1280,7 +1307,8 @@ fail:
  */
 NPY_NO_EXPORT PyObject *
 _array_from_array_like(PyObject *op,
-        PyArray_Descr *requested_dtype, npy_bool writeable, PyObject *context) {
+        PyArray_Descr *requested_dtype, npy_bool writeable, PyObject *context,
+        int never_copy) {
     PyObject* tmp;
 
     /*
@@ -1288,9 +1316,10 @@ _array_from_array_like(PyObject *op,
      * We skip bytes and unicode since they are considered scalars. Unicode
      * would fail but bytes would be incorrectly converted to a uint8 array.
      */
-    if (!PyBytes_Check(op) && !PyUnicode_Check(op)) {
+    if (PyObject_CheckBuffer(op) && !PyBytes_Check(op) && !PyUnicode_Check(op)) {
         PyObject *memoryview = PyMemoryView_FromObject(op);
         if (memoryview == NULL) {
+            /* TODO: Should probably not blanket ignore errors. */
             PyErr_Clear();
         }
         else {
@@ -1336,7 +1365,7 @@ _array_from_array_like(PyObject *op,
      *      this should be changed!
      */
     if (!writeable && tmp == Py_NotImplemented) {
-        tmp = PyArray_FromArrayAttr(op, requested_dtype, context);
+        tmp = PyArray_FromArrayAttr_int(op, requested_dtype, never_copy);
         if (tmp == NULL) {
             return NULL;
         }
@@ -1436,7 +1465,7 @@ setArrayFromSequence(PyArrayObject *a, PyObject *s,
     }
 
     /* Try __array__ before using s as a sequence */
-    PyObject *tmp = _array_from_array_like(s, NULL, 0, NULL);
+    PyObject *tmp = _array_from_array_like(s, NULL, 0, NULL, 0);
     if (tmp == NULL) {
         goto fail;
     }
@@ -1564,7 +1593,8 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
     Py_XDECREF(newtype);
 
     ndim = PyArray_DiscoverDTypeAndShape(op,
-            NPY_MAXDIMS, dims, &cache, fixed_DType, fixed_descriptor, &dtype);
+            NPY_MAXDIMS, dims, &cache, fixed_DType, fixed_descriptor, &dtype,
+            flags & NPY_ARRAY_ENSURENOCOPY);
 
     Py_XDECREF(fixed_descriptor);
     Py_XDECREF(fixed_DType);
@@ -1689,7 +1719,19 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
                 ((PyVoidScalarObject *)op)->flags,
                 NULL, op);
     }
-    else if (cache == 0 && newtype != NULL &&
+    /*
+     * If we got this far, we definitely have to create a copy, since we are
+     * converting either from a scalar (cache == NULL) or a (nested) sequence.
+     */
+    if (flags & NPY_ARRAY_ENSURENOCOPY ) {
+        PyErr_SetString(PyExc_ValueError,
+                "Unable to avoid copy while creating an array.");
+        Py_DECREF(dtype);
+        npy_free_coercion_cache(cache);
+        return NULL;
+    }
+
+    if (cache == NULL && newtype != NULL &&
             PyDataType_ISSIGNED(newtype) && PyArray_IsScalar(op, Generic)) {
         assert(ndim == 0);
         /*
@@ -1716,8 +1758,7 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
     }
 
     /* There was no array (or array-like) passed in directly. */
-    if ((flags & NPY_ARRAY_WRITEBACKIFCOPY) ||
-            (flags & NPY_ARRAY_UPDATEIFCOPY)) {
+    if (flags & NPY_ARRAY_WRITEBACKIFCOPY) {
         PyErr_SetString(PyExc_TypeError,
                         "WRITEBACKIFCOPY used for non-array input.");
         Py_DECREF(dtype);
@@ -1786,11 +1827,11 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
  * NPY_ARRAY_WRITEABLE,
  * NPY_ARRAY_NOTSWAPPED,
  * NPY_ARRAY_ENSURECOPY,
- * NPY_ARRAY_UPDATEIFCOPY,
  * NPY_ARRAY_WRITEBACKIFCOPY,
  * NPY_ARRAY_FORCECAST,
  * NPY_ARRAY_ENSUREARRAY,
- * NPY_ARRAY_ELEMENTSTRIDES
+ * NPY_ARRAY_ELEMENTSTRIDES,
+ * NPY_ARRAY_ENSURENOCOPY
  *
  * or'd (|) together
  *
@@ -1812,9 +1853,6 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
  * Fortran arrays are always behaved (aligned,
  * notswapped, and writeable) and not (C) CONTIGUOUS (if > 1d).
  *
- * NPY_ARRAY_UPDATEIFCOPY is deprecated in favor of
- * NPY_ARRAY_WRITEBACKIFCOPY in 1.14
-
  * NPY_ARRAY_WRITEBACKIFCOPY flag sets this flag in the returned
  * array if a copy is made and the base argument points to the (possibly)
  * misbehaved array. Before returning to python, PyArray_ResolveWritebackIfCopy
@@ -1851,9 +1889,15 @@ PyArray_CheckFromAny(PyObject *op, PyArray_Descr *descr, int min_depth,
     if (obj == NULL) {
         return NULL;
     }
-    if ((requires & NPY_ARRAY_ELEMENTSTRIDES) &&
-        !PyArray_ElementStrides(obj)) {
+
+    if ((requires & NPY_ARRAY_ELEMENTSTRIDES)
+            && !PyArray_ElementStrides(obj)) {
         PyObject *ret;
+        if (requires & NPY_ARRAY_ENSURENOCOPY) {
+            PyErr_SetString(PyExc_ValueError,
+                    "Unable to avoid copy while creating a new array.");
+            return NULL;
+        }
         ret = PyArray_NewCopy((PyArrayObject *)obj, NPY_ANYORDER);
         Py_DECREF(obj);
         obj = ret;
@@ -1928,6 +1972,13 @@ PyArray_FromArray(PyArrayObject *arr, PyArray_Descr *newtype, int flags)
            !PyArray_EquivTypes(oldtype, newtype);
 
     if (copy) {
+        if (flags & NPY_ARRAY_ENSURENOCOPY ) {
+            PyErr_SetString(PyExc_ValueError,
+                    "Unable to avoid copy while creating an array from given array.");
+            Py_DECREF(newtype);
+            return NULL;
+        }
+
         NPY_ORDER order = NPY_KEEPORDER;
         int subok = 1;
 
@@ -1953,31 +2004,8 @@ PyArray_FromArray(PyArrayObject *arr, PyArray_Descr *newtype, int flags)
             return NULL;
         }
 
-        if (flags & NPY_ARRAY_UPDATEIFCOPY) {
-            /* This is the ONLY place the NPY_ARRAY_UPDATEIFCOPY flag
-             * is still used.
-             * Can be deleted once the flag itself is removed
-             */
 
-            /* 2017-Nov-10 1.14 */
-            if (DEPRECATE(
-                    "NPY_ARRAY_UPDATEIFCOPY, NPY_ARRAY_INOUT_ARRAY, and "
-                    "NPY_ARRAY_INOUT_FARRAY are deprecated, use NPY_WRITEBACKIFCOPY, "
-                    "NPY_ARRAY_INOUT_ARRAY2, or NPY_ARRAY_INOUT_FARRAY2 respectively "
-                    "instead, and call PyArray_ResolveWritebackIfCopy before the "
-                    "array is deallocated, i.e. before the last call to Py_DECREF.") < 0) {
-                Py_DECREF(ret);
-                return NULL;
-            }
-            Py_INCREF(arr);
-            if (PyArray_SetWritebackIfCopyBase(ret, arr) < 0) {
-                Py_DECREF(ret);
-                return NULL;
-            }
-            PyArray_ENABLEFLAGS(ret, NPY_ARRAY_UPDATEIFCOPY);
-            PyArray_CLEARFLAGS(ret, NPY_ARRAY_WRITEBACKIFCOPY);
-        }
-        else if (flags & NPY_ARRAY_WRITEBACKIFCOPY) {
+        if (flags & NPY_ARRAY_WRITEBACKIFCOPY) {
             Py_INCREF(arr);
             if (PyArray_SetWritebackIfCopyBase(ret, arr) < 0) {
                 Py_DECREF(ret);
@@ -2000,7 +2028,6 @@ PyArray_FromArray(PyArrayObject *arr, PyArray_Descr *newtype, int flags)
             if (flags & NPY_ARRAY_ENSUREARRAY) {
                 subtype = &PyArray_Type;
             }
-
             ret = (PyArrayObject *)PyArray_View(arr, NULL, subtype);
             if (ret == NULL) {
                 return NULL;
@@ -2425,18 +2452,30 @@ PyArray_FromInterface(PyObject *origin)
     return NULL;
 }
 
-/*NUMPY_API
+
+/**
+ * Check for an __array__ attribute and call it when it exists.
+ *
+ *  .. warning:
+ *      If returned, `NotImplemented` is borrowed and must not be Decref'd
+ *
+ * @param op The Python object to convert to an array.
+ * @param descr The desired `arr.dtype`, passed into the `__array__` call,
+ *        as information but is not checked/enforced!
+ * @param never_copy Specifies that a copy is not allowed.
+ *        NOTE: Currently, this means an error is raised instead of calling
+ *        `op.__array__()`.  In the future we could call for example call
+ *        `op.__array__(never_copy=True)` instead.
+ * @returns NotImplemented if `__array__` is not defined or a NumPy array
+ *          (or subclass).  On error, return NULL.
  */
 NPY_NO_EXPORT PyObject *
-PyArray_FromArrayAttr(PyObject *op, PyArray_Descr *typecode, PyObject *context)
+PyArray_FromArrayAttr_int(
+        PyObject *op, PyArray_Descr *descr, int never_copy)
 {
     PyObject *new;
     PyObject *array_meth;
 
-    if (context != NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "'context' must be NULL");
-        return NULL;
-    }
     array_meth = PyArray_LookupSpecial_OnInstance(op, "__array__");
     if (array_meth == NULL) {
         if (PyErr_Occurred()) {
@@ -2452,6 +2491,16 @@ PyArray_FromArrayAttr(PyObject *op, PyArray_Descr *typecode, PyObject *context)
         }
         return Py_NotImplemented;
     }
+    if (never_copy) {
+        /* Currently, we must always assume that `__array__` returns a copy */
+        PyErr_SetString(PyExc_ValueError,
+                "Unable to avoid copy while converting from an object "
+                "implementing the `__array__` protocol.  NumPy cannot ensure "
+                "that no copy will be made.");
+        Py_DECREF(array_meth);
+        return NULL;
+    }
+
     if (PyType_Check(op) && PyObject_HasAttrString(array_meth, "__get__")) {
         /*
          * If the input is a class `array_meth` may be a property-like object.
@@ -2462,11 +2511,11 @@ PyArray_FromArrayAttr(PyObject *op, PyArray_Descr *typecode, PyObject *context)
         Py_DECREF(array_meth);
         return Py_NotImplemented;
     }
-    if (typecode == NULL) {
+    if (descr == NULL) {
         new = PyObject_CallFunction(array_meth, NULL);
     }
     else {
-        new = PyObject_CallFunction(array_meth, "O", typecode);
+        new = PyObject_CallFunction(array_meth, "O", descr);
     }
     Py_DECREF(array_meth);
     if (new == NULL) {
@@ -2481,6 +2530,21 @@ PyArray_FromArrayAttr(PyObject *op, PyArray_Descr *typecode, PyObject *context)
     }
     return new;
 }
+
+
+/*NUMPY_API
+ */
+NPY_NO_EXPORT PyObject *
+PyArray_FromArrayAttr(PyObject *op, PyArray_Descr *typecode, PyObject *context)
+{
+    if (context != NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "'context' must be NULL");
+        return NULL;
+    }
+
+    return PyArray_FromArrayAttr_int(op, typecode, 0);
+}
+
 
 /*NUMPY_API
 * new reference -- accepts NULL for mintype
@@ -3409,7 +3473,9 @@ array_from_text(PyArray_Descr *dtype, npy_intp num, char const *sep, size_t *nre
         dptr += dtype->elsize;
         if (num < 0 && thisbuf == size) {
             totalbytes += bytes;
-            tmp = PyDataMem_RENEW(PyArray_DATA(r), totalbytes);
+            /* The handler is always valid */
+            tmp = PyDataMem_UserRENEW(PyArray_DATA(r), totalbytes,
+                                  PyArray_HANDLER(r));
             if (tmp == NULL) {
                 err = 1;
                 break;
@@ -3431,7 +3497,9 @@ array_from_text(PyArray_Descr *dtype, npy_intp num, char const *sep, size_t *nre
         const size_t nsize = PyArray_MAX(*nread,1)*dtype->elsize;
 
         if (nsize != 0) {
-            tmp = PyDataMem_RENEW(PyArray_DATA(r), nsize);
+            /* The handler is always valid */
+            tmp = PyDataMem_UserRENEW(PyArray_DATA(r), nsize,
+                                  PyArray_HANDLER(r));
             if (tmp == NULL) {
                 err = 1;
             }
@@ -3536,7 +3604,9 @@ PyArray_FromFile(FILE *fp, PyArray_Descr *dtype, npy_intp num, char *sep)
         const size_t nsize = PyArray_MAX(nread,1) * dtype->elsize;
         char *tmp;
 
-        if ((tmp = PyDataMem_RENEW(PyArray_DATA(ret), nsize)) == NULL) {
+        /* The handler is always valid */
+        if((tmp = PyDataMem_UserRENEW(PyArray_DATA(ret), nsize,
+                                     PyArray_HANDLER(ret))) == NULL) {
             Py_DECREF(dtype);
             Py_DECREF(ret);
             return PyErr_NoMemory();
@@ -3820,7 +3890,9 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, npy_intp count)
             */
             elcount = (i >> 1) + (i < 4 ? 4 : 2) + i;
             if (!npy_mul_with_overflow_intp(&nbytes, elcount, elsize)) {
-                new_data = PyDataMem_RENEW(PyArray_DATA(ret), nbytes);
+                /* The handler is always valid */
+                new_data = PyDataMem_UserRENEW(PyArray_DATA(ret), nbytes,
+                                  PyArray_HANDLER(ret));
             }
             else {
                 new_data = NULL;
@@ -3858,10 +3930,12 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, npy_intp count)
      * (assuming realloc is reasonably good about reusing space...)
      */
     if (i == 0 || elsize == 0) {
-        /* The size cannot be zero for PyDataMem_RENEW. */
+        /* The size cannot be zero for realloc. */
         goto done;
     }
-    new_data = PyDataMem_RENEW(PyArray_DATA(ret), i * elsize);
+    /* The handler is always valid */
+    new_data = PyDataMem_UserRENEW(PyArray_DATA(ret), i * elsize,
+                                   PyArray_HANDLER(ret));
     if (new_data == NULL) {
         PyErr_SetString(PyExc_MemoryError,
                 "cannot allocate array memory");

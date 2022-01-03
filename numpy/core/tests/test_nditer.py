@@ -9,7 +9,7 @@ import numpy.core._multiarray_tests as _multiarray_tests
 from numpy import array, arange, nditer, all
 from numpy.testing import (
     assert_, assert_equal, assert_array_equal, assert_raises,
-    HAS_REFCOUNT, suppress_warnings
+    HAS_REFCOUNT, suppress_warnings, break_cycles
     )
 
 
@@ -828,7 +828,7 @@ def test_iter_nbo_align_contig():
                         casting='equiv',
                         op_dtypes=[np.dtype('f4')])
     with i:
-        # context manager triggers UPDATEIFCOPY on i at exit
+        # context manager triggers WRITEBACKIFCOPY on i at exit
         assert_equal(i.dtypes[0].byteorder, a.dtype.byteorder)
         assert_equal(i.operands[0].dtype.byteorder, a.dtype.byteorder)
         assert_equal(i.operands[0], a)
@@ -3128,6 +3128,8 @@ def test_warn_noclose():
         assert len(sup.log) == 1
 
 
+@pytest.mark.skipif(sys.version_info[:2] == (3, 9) and sys.platform == "win32",
+                    reason="Errors with Python 3.9 on Windows")
 @pytest.mark.skipif(not HAS_REFCOUNT, reason="Python lacks refcounts")
 @pytest.mark.parametrize(["in_dtype", "buf_dtype"],
         [("i", "O"), ("O", "i"),  # most simple cases
@@ -3148,6 +3150,8 @@ def test_partial_iteration_cleanup(in_dtype, buf_dtype, steps):
 
     # Note that resetting does not free references
     del it
+    break_cycles()
+    break_cycles()
     assert count == sys.getrefcount(value)
 
     # Repeat the test with `iternext`
@@ -3157,6 +3161,8 @@ def test_partial_iteration_cleanup(in_dtype, buf_dtype, steps):
         it.iternext()
 
     del it  # should ensure cleanup
+    break_cycles()
+    break_cycles()
     assert count == sys.getrefcount(value)
 
 

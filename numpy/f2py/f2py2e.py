@@ -82,6 +82,9 @@ Options:
                    file <modulename>module.c or extension module <modulename>.
                    Default is 'untitled'.
 
+  '-include<header>'  Writes additional headers in the C wrapper, can be passed
+                      multiple times, generates #include <header> each time.
+
   --[no-]lower     Do [not] lower the cases in <fortran files>. By default,
                    --lower is assumed with -h key, and --no-lower without -h key.
 
@@ -286,7 +289,7 @@ def scaninputline(inputline):
         sys.exit()
     if not os.path.isdir(buildpath):
         if not verbose:
-            outmess('Creating build directory %s' % (buildpath))
+            outmess('Creating build directory %s\n' % (buildpath))
         os.mkdir(buildpath)
     if signsfile:
         signsfile = os.path.join(buildpath, signsfile)
@@ -416,7 +419,7 @@ def run_main(comline_list):
 
     Examples
     --------
-    .. literalinclude:: code/results/run_main_session.dat
+    .. literalinclude:: ../../source/f2py/code/results/run_main_session.dat
         :language: python
 
     """

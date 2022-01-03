@@ -29,10 +29,11 @@ from ._dtypes import (
     _dtype_categories,
 )
 
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union, Any
 
 if TYPE_CHECKING:
-    from ._typing import PyCapsule, Device, Dtype
+    from ._typing import Any, PyCapsule, Device, Dtype
+    import numpy.typing as npt
 
 import numpy as np
 
@@ -99,7 +100,25 @@ class Array:
         """
         Performs the operation __repr__.
         """
-        return f"Array({np.array2string(self._array, separator=', ')}, dtype={self.dtype.name})"
+        suffix = f", dtype={self.dtype.name})"
+        if 0 in self.shape:
+            prefix = "empty("
+            mid = str(self.shape)
+        else:
+            prefix = "Array("
+            mid = np.array2string(self._array, separator=', ', prefix=prefix, suffix=suffix)
+        return prefix + mid + suffix
+
+    # This function is not required by the spec, but we implement it here for
+    # convenience so that np.asarray(np.array_api.Array) will work.
+    def __array__(self, dtype: None | np.dtype[Any] = None) -> npt.NDArray[Any]:
+        """
+        Warning: this method is NOT part of the array API spec. Implementers
+        of other libraries need not include it, and users should not assume it
+        will be present in other implementations.
+
+        """
+        return np.asarray(self._array, dtype=dtype)
 
     # These are various helper functions to make the array behavior match the
     # spec in places where it either deviates from or is more strict than
@@ -241,6 +260,10 @@ class Array:
         The following cases are allowed by NumPy, but not specified by the array
         API specification:
 
+        - Indices to not include an implicit ellipsis at the end. That is,
+          every axis of an array must be explicitly indexed or an ellipsis
+          included.
+
         - The start and stop of a slice may not be out of bounds. In
           particular, for a slice ``i:j:k`` on an axis of size ``n``, only the
           following are allowed:
@@ -267,6 +290,10 @@ class Array:
                 return key
             if shape == ():
                 return key
+            if len(shape) > 1:
+                raise IndexError(
+                    "Multidimensional arrays must include an index for every axis or use an ellipsis"
+                )
             size = shape[0]
             # Ensure invalid slice entries are passed through.
             if key.start is not None:
@@ -274,7 +301,7 @@ class Array:
                     operator.index(key.start)
                 except TypeError:
                     return key
-                if not (-size <= key.start <= max(0, size - 1)):
+                if not (-size <= key.start <= size):
                     raise IndexError(
                         "Slices with out-of-bounds start are not allowed in the array API namespace"
                     )
@@ -319,6 +346,10 @@ class Array:
                 zip(key[:ellipsis_i:-1], shape[:ellipsis_i:-1])
             ):
                 Array._validate_index(idx, (size,))
+            if n_ellipsis == 0 and len(key) < len(shape):
+                raise IndexError(
+                    "Multidimensional arrays must include an index for every axis or use an ellipsis"
+                )
             return key
         elif isinstance(key, bool):
             return key
@@ -336,7 +367,12 @@ class Array:
                 "newaxis indices are not allowed in the array API namespace"
             )
         try:
-            return operator.index(key)
+            key = operator.index(key)
+            if shape is not None and len(shape) > 1:
+                raise IndexError(
+                    "Multidimensional arrays must include an index for every axis or use an ellipsis"
+                )
+            return key
         except TypeError:
             # Note: This also omits boolean arrays that are not already in
             # Array() form, like a list of booleans.
@@ -379,7 +415,7 @@ class Array:
 
     def __array_namespace__(
         self: Array, /, *, api_version: Optional[str] = None
-    ) -> object:
+    ) -> Any:
         if api_version is not None and not api_version.startswith("2021."):
             raise ValueError(f"Unrecognized array API version: {api_version!r}")
         return array_api
@@ -391,6 +427,8 @@ class Array:
         # Note: This is an error here.
         if self._array.ndim != 0:
             raise TypeError("bool is only allowed on arrays with 0 dimensions")
+        if self.dtype not in _boolean_dtypes:
+            raise ValueError("bool is only allowed on boolean arrays")
         res = self._array.__bool__()
         return res
 
@@ -398,16 +436,14 @@ class Array:
         """
         Performs the operation __dlpack__.
         """
-        res = self._array.__dlpack__(stream=stream)
-        return self.__class__._new(res)
+        return self._array.__dlpack__(stream=stream)
 
     def __dlpack_device__(self: Array, /) -> Tuple[IntEnum, int]:
         """
         Performs the operation __dlpack_device__.
         """
         # Note: device support is required for this
-        res = self._array.__dlpack_device__()
-        return self.__class__._new(res)
+        return self._array.__dlpack_device__()
 
     def __eq__(self: Array, other: Union[int, float, bool, Array], /) -> Array:
         """
@@ -429,6 +465,8 @@ class Array:
         # Note: This is an error here.
         if self._array.ndim != 0:
             raise TypeError("float is only allowed on arrays with 0 dimensions")
+        if self.dtype not in _floating_dtypes:
+            raise ValueError("float is only allowed on floating-point arrays")
         res = self._array.__float__()
         return res
 
@@ -488,7 +526,16 @@ class Array:
         # Note: This is an error here.
         if self._array.ndim != 0:
             raise TypeError("int is only allowed on arrays with 0 dimensions")
+        if self.dtype not in _integer_dtypes:
+            raise ValueError("int is only allowed on integer arrays")
         res = self._array.__int__()
+        return res
+
+    def __index__(self: Array, /) -> int:
+        """
+        Performs the operation __index__.
+        """
+        res = self._array.__index__()
         return res
 
     def __invert__(self: Array, /) -> Array:
@@ -510,13 +557,6 @@ class Array:
         self, other = self._normalize_two_args(self, other)
         res = self._array.__le__(other._array)
         return self.__class__._new(res)
-
-    # Note: __len__ may end up being removed from the array API spec.
-    def __len__(self, /) -> int:
-        """
-        Performs the operation __len__.
-        """
-        return self._array.__len__()
 
     def __lshift__(self: Array, other: Union[int, Array], /) -> Array:
         """
@@ -979,6 +1019,13 @@ class Array:
         res = self._array.__rxor__(other._array)
         return self.__class__._new(res)
 
+    def to_device(self: Array, device: Device, /, stream: None = None) -> Array:
+        if stream is not None:
+            raise ValueError("The stream argument to to_device() is not supported")
+        if device == 'cpu':
+            return self
+        raise ValueError(f"Unsupported device {device!r}")
+
     @property
     def dtype(self) -> Dtype:
         """
@@ -991,6 +1038,12 @@ class Array:
     @property
     def device(self) -> Device:
         return "cpu"
+
+    # Note: mT is new in array API spec (see matrix_transpose)
+    @property
+    def mT(self) -> Array:
+        from .linalg import matrix_transpose
+        return matrix_transpose(self)
 
     @property
     def ndim(self) -> int:
@@ -1026,4 +1079,9 @@ class Array:
 
         See its docstring for more information.
         """
-        return self._array.T
+        # Note: T only works on 2-dimensional arrays. See the corresponding
+        # note in the specification:
+        # https://data-apis.org/array-api/latest/API_specification/array_object.html#t
+        if self.ndim != 2:
+            raise ValueError("x.T requires x to have 2 dimensions. Use x.mT to transpose stacks of matrices and permute_dims() to permute dimensions.")
+        return self.__class__._new(self._array.T)
