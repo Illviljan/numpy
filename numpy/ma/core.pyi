@@ -7,6 +7,7 @@ from typing import Any, Literal, SupportsIndex, TypeAlias, TypeVar, overload
 from _typeshed import Incomplete
 from typing_extensions import deprecated
 
+import numpy as np
 from numpy import (
     _ModeKind,
     _OrderKACF,
@@ -19,18 +20,20 @@ from numpy import (
     expand_dims,
     float64,
     generic,
+    int_,
     intp,
     ndarray,
 )
 from numpy._globals import _NoValueType
 from numpy._typing import (
     ArrayLike,
-    _IntLike_co,
     NDArray,
     _ArrayLike,
+    _ArrayLikeBool_co,
+    _ArrayLikeInt,
     _ArrayLikeInt_co,
     _DTypeLikeBool,
-    _ArrayLikeInt,
+    _IntLike_co,
     _ScalarLike_co,
     _Shape,
     _ShapeLike,
@@ -219,12 +222,13 @@ __all__ = [
 
 _ShapeT = TypeVar("_ShapeT", bound=tuple[int, ...])
 _ShapeT_co = TypeVar("_ShapeT_co", bound=tuple[int, ...], covariant=True)
-_DTypeT = TypeVar("_DTypeT", bound=dtype[Any])
-_DTypeT_co = TypeVar("_DTypeT_co", bound=dtype[Any], covariant=True)
+_DTypeT = TypeVar("_DTypeT", bound=dtype)
+_DTypeT_co = TypeVar("_DTypeT_co", bound=dtype, covariant=True)
 _ArrayT = TypeVar("_ArrayT", bound=ndarray[Any, Any])
-_SCT = TypeVar("_SCT", bound=generic)
+_ScalarT = TypeVar("_ScalarT", bound=generic)
+_ScalarT_co = TypeVar("_ScalarT_co", bound=generic)
 # A subset of `MaskedArray` that can be parametrized w.r.t. `np.generic`
-_MaskedArray: TypeAlias = MaskedArray[_Shape, dtype[_SCT]]
+_MaskedArray: TypeAlias = MaskedArray[_Shape, dtype[_ScalarT]]
 
 MaskType = bool
 nomask: bool
@@ -238,7 +242,12 @@ def minimum_fill_value(obj): ...
 def maximum_fill_value(obj): ...
 def set_fill_value(a, fill_value): ...
 def common_fill_value(a, b): ...
-def filled(a, fill_value=...): ...
+@overload
+def filled(a: ndarray[_ShapeT_co, _DTypeT_co], fill_value: _ScalarLike_co | None = None) -> ndarray[_ShapeT_co, _DTypeT_co]: ...
+@overload
+def filled(a: _ArrayLike[_ScalarT_co], fill_value: _ScalarLike_co | None = None) -> NDArray[_ScalarT_co]: ...
+@overload
+def filled(a: ArrayLike, fill_value: _ScalarLike_co | None = None) -> NDArray[Any]: ...
 def getdata(a, subok=...): ...
 get_data = getdata
 
@@ -417,15 +426,15 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     def fill_value(self, value=...): ...
     get_fill_value: Any
     set_fill_value: Any
-    def filled(self, fill_value=...): ...
-    def compressed(self): ...
+    def filled(self, /, fill_value: _ScalarLike_co | None = None) -> ndarray[_ShapeT_co, _DTypeT_co]: ...
+    def compressed(self) -> ndarray[tuple[int], _DTypeT_co]: ...
     def compress(self, condition, axis=..., out=...): ...
     def __eq__(self, other): ...
     def __ne__(self, other): ...
-    def __ge__(self, other): ...
-    def __gt__(self, other): ...
-    def __le__(self, other): ...
-    def __lt__(self, other): ...
+    def __ge__(self, other: ArrayLike, /) -> _MaskedArray[bool_]: ...
+    def __gt__(self, other: ArrayLike, /) -> _MaskedArray[bool_]: ...
+    def __le__(self, other: ArrayLike, /) -> _MaskedArray[bool_]: ...
+    def __lt__(self, other: ArrayLike, /) -> _MaskedArray[bool_]: ...
     def __add__(self, other): ...
     def __radd__(self, other): ...
     def __sub__(self, other): ...
@@ -452,13 +461,23 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     @property  # type: ignore[misc]
     def real(self): ...
     get_real: Any
-    def count(self, axis=..., keepdims=...): ...
+
+    # keep in sync with `np.ma.count`
+    @overload
+    def count(self, axis: None = None, keepdims: Literal[False] | _NoValueType = ...) -> int: ...
+    @overload
+    def count(self, axis: _ShapeLike, keepdims: bool | _NoValueType = ...) -> NDArray[int_]: ...
+    @overload
+    def count(self, axis: _ShapeLike | None = ..., *, keepdims: Literal[True]) -> NDArray[int_]: ...
+    @overload
+    def count(self, axis: _ShapeLike | None, keepdims: Literal[True]) -> NDArray[int_]: ...
+
     def ravel(self, order=...): ...
     def reshape(self, *s, **kwargs): ...
     def resize(self, newshape, refcheck=..., order=...): ...
-    def put(self, indices, values, mode=...): ...
-    def ids(self): ...
-    def iscontiguous(self): ...
+    def put(self, indices: _ArrayLikeInt_co, values: ArrayLike, mode: _ModeKind = "raise") -> None: ...
+    def ids(self) -> tuple[int, int]: ...
+    def iscontiguous(self) -> bool: ...
     def all(self, axis=..., out=..., keepdims=...): ...
     def any(self, axis=..., out=..., keepdims=...): ...
     def nonzero(self): ...
@@ -567,12 +586,12 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     #
     @overload  # type: ignore[override]
     def min(
-        self: _MaskedArray[_SCT],
+        self: _MaskedArray[_ScalarT],
         axis: None = None,
         out: None = None,
         fill_value: _ScalarLike_co | None = None,
         keepdims: Literal[False] | _NoValueType = ...,
-    ) -> _SCT: ...
+    ) -> _ScalarT: ...
     @overload
     def min(
         self,
@@ -602,12 +621,12 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     #
     @overload  # type: ignore[override]
     def max(
-        self: _MaskedArray[_SCT],
+        self: _MaskedArray[_ScalarT],
         axis: None = None,
         out: None = None,
         fill_value: _ScalarLike_co | None = None,
         keepdims: Literal[False] | _NoValueType = ...,
-    ) -> _SCT: ...
+    ) -> _ScalarT: ...
     @overload
     def max(
         self,
@@ -637,12 +656,12 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     #
     @overload
     def ptp(
-        self: _MaskedArray[_SCT],
+        self: _MaskedArray[_ScalarT],
         axis: None = None,
         out: None = None,
         fill_value: _ScalarLike_co | None = None,
         keepdims: Literal[False] = False,
-    ) -> _SCT: ...
+    ) -> _ScalarT: ...
     @overload
     def ptp(
         self,
@@ -670,38 +689,62 @@ class MaskedArray(ndarray[_ShapeT_co, _DTypeT_co]):
     ) -> _ArrayT: ...
 
     #
+    @overload
     def partition(
         self,
+        /,
         kth: _ArrayLikeInt,
         axis: SupportsIndex = -1,
         kind: _PartitionKind = "introselect",
-        order: str | Sequence[str] | None = None
+        order: None = None
     ) -> None: ...
+    @overload
+    def partition(
+        self: _MaskedArray[np.void],
+        /,
+        kth: _ArrayLikeInt,
+        axis: SupportsIndex = -1,
+        kind: _PartitionKind = "introselect",
+        order: str | Sequence[str] | None = None,
+    ) -> None: ...
+
+    #
+    @overload
     def argpartition(
         self,
+        /,
         kth: _ArrayLikeInt,
-        axis: SupportsIndex = -1,
+        axis: SupportsIndex | None = -1,
         kind: _PartitionKind = "introselect",
-        order: str | Sequence[str] | None = None
+        order: None = None,
+    ) -> _MaskedArray[intp]: ...
+    @overload
+    def argpartition(
+        self: _MaskedArray[np.void],
+        /,
+        kth: _ArrayLikeInt,
+        axis: SupportsIndex | None = -1,
+        kind: _PartitionKind = "introselect",
+        order: str | Sequence[str] | None = None,
     ) -> _MaskedArray[intp]: ...
 
     # Keep in-sync with np.ma.take
     @overload
     def take(  # type: ignore[overload-overlap]
-        self: _MaskedArray[_SCT],
+        self: _MaskedArray[_ScalarT],
         indices: _IntLike_co,
         axis: None = None,
         out: None = None,
         mode: _ModeKind = 'raise'
-    ) -> _SCT: ...
+    ) -> _ScalarT: ...
     @overload
     def take(
-        self: _MaskedArray[_SCT],
+        self: _MaskedArray[_ScalarT],
         indices: _ArrayLikeInt_co,
         axis: SupportsIndex | None = None,
         out: None = None,
         mode: _ModeKind = 'raise',
-    ) -> _MaskedArray[_SCT]: ...
+    ) -> _MaskedArray[_ScalarT]: ...
     @overload
     def take(
         self,
@@ -804,7 +847,7 @@ def array(
     subok=...,
     ndmin=...,
 ): ...
-def is_masked(x): ...
+def is_masked(x: object) -> bool: ...
 
 class _extrema_operation(_MaskedUFunc):
     compare: Any
@@ -818,12 +861,12 @@ class _extrema_operation(_MaskedUFunc):
 
 @overload
 def min(
-    obj: _ArrayLike[_SCT],
+    obj: _ArrayLike[_ScalarT],
     axis: None = None,
     out: None = None,
     fill_value: _ScalarLike_co | None = None,
     keepdims: Literal[False] | _NoValueType = ...,
-) -> _SCT: ...
+) -> _ScalarT: ...
 @overload
 def min(
     obj: ArrayLike,
@@ -852,12 +895,12 @@ def min(
 
 @overload
 def max(
-    obj: _ArrayLike[_SCT],
+    obj: _ArrayLike[_ScalarT],
     axis: None = None,
     out: None = None,
     fill_value: _ScalarLike_co | None = None,
     keepdims: Literal[False] | _NoValueType = ...,
-) -> _SCT: ...
+) -> _ScalarT: ...
 @overload
 def max(
     obj: ArrayLike,
@@ -886,12 +929,12 @@ def max(
 
 @overload
 def ptp(
-    obj: _ArrayLike[_SCT],
+    obj: _ArrayLike[_ScalarT],
     axis: None = None,
     out: None = None,
     fill_value: _ScalarLike_co | None = None,
     keepdims: Literal[False] | _NoValueType = ...,
-) -> _SCT: ...
+) -> _ScalarT: ...
 @overload
 def ptp(
     obj: ArrayLike,
@@ -949,7 +992,15 @@ sum: _frommethod
 swapaxes: _frommethod
 trace: _frommethod
 var: _frommethod
-count: _frommethod
+
+@overload
+def count(self: ArrayLike, axis: None = None, keepdims: Literal[False] | _NoValueType = ...) -> int: ...
+@overload
+def count(self: ArrayLike, axis: _ShapeLike, keepdims: bool | _NoValueType = ...) -> NDArray[int_]: ...
+@overload
+def count(self: ArrayLike, axis: _ShapeLike | None = ..., *, keepdims: Literal[True]) -> NDArray[int_]: ...
+@overload
+def count(self: ArrayLike, axis: _ShapeLike | None, keepdims: Literal[True]) -> NDArray[int_]: ...
 
 @overload
 def argmin(
@@ -1031,20 +1082,20 @@ maximum: _extrema_operation
 
 @overload
 def take(  # type: ignore[overload-overlap]
-    a: _ArrayLike[_SCT],
+    a: _ArrayLike[_ScalarT],
     indices: _IntLike_co,
     axis: None = None,
     out: None = None,
     mode: _ModeKind = 'raise'
-) -> _SCT: ...
+) -> _ScalarT: ...
 @overload
 def take(
-    a: _ArrayLike[_SCT],
+    a: _ArrayLike[_ScalarT],
     indices: _ArrayLikeInt_co,
     axis: SupportsIndex | None = None,
     out: None = None,
     mode: _ModeKind = 'raise',
-) -> _MaskedArray[_SCT]: ...
+) -> _MaskedArray[_ScalarT]: ...
 @overload
 def take(
     a: ArrayLike,
@@ -1103,19 +1154,22 @@ def sort(
     *,
     stable: Literal[False] | None = False,
 ) -> NDArray[Any]: ...
-def compressed(x): ...
+@overload
+def compressed(x: _ArrayLike[_ScalarT_co]) -> ndarray[tuple[int], dtype[_ScalarT_co]]: ...
+@overload
+def compressed(x: ArrayLike) -> ndarray[tuple[int], dtype]: ...
 def concatenate(arrays, axis=...): ...
 def diag(v, k=...): ...
 def left_shift(a, n): ...
 def right_shift(a, n): ...
-def put(a, indices, values, mode=...): ...
-def putmask(a, mask, values): ...
+def put(a: NDArray[Any], indices: _ArrayLikeInt_co, values: ArrayLike, mode: _ModeKind = 'raise') -> None: ...
+def putmask(a: NDArray[Any], mask: _ArrayLikeBool_co, values: ArrayLike) -> None: ...
 def transpose(a, axes=...): ...
 def reshape(a, new_shape, order=...): ...
 def resize(x, new_shape): ...
-def ndim(obj): ...
+def ndim(obj: ArrayLike) -> int: ...
 def shape(obj): ...
-def size(obj, axis=...): ...
+def size(obj: ArrayLike, axis: SupportsIndex | None = None) -> int: ...
 def diff(a, /, n=..., axis=..., prepend=..., append=...): ...
 def where(condition, x=..., y=...): ...
 def choose(indices, choices, out=..., mode=...): ...

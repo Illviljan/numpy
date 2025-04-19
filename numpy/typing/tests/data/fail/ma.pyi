@@ -92,3 +92,27 @@ m.argpartition(axis=(0,1))  # E: No overload variant
 m.argpartition(kind='cabbage')  # E: No overload variant
 m.argpartition(order=lambda: 'cabbage')  # E: No overload variant
 m.argpartition(AR_b)  # E: No overload variant
+
+np.ma.ndim(lambda: 'lambda')  # E: No overload variant
+
+np.ma.size(AR_b, axis='0')  # E: No overload variant
+
+m >= (lambda x: 'mango') # E: No overload variant
+
+m > (lambda x: 'mango') # E: No overload variant
+
+m <= (lambda x: 'mango') # E: No overload variant
+
+m < (lambda x: 'mango') # E: No overload variant
+
+m.count(axis=0.)  # E: No overload variant
+
+np.ma.count(m, axis=0.)  # E: No overload variant
+
+m.put(4, 999, mode='flip')  # E: No overload variant
+
+np.ma.put(m, 4, 999, mode='flip')  # E: No overload variant
+
+np.ma.put([1,1,3], 0, 999)  # E: No overload variant
+
+np.ma.compressed(lambda: 'compress me')  # E: No overload variant
