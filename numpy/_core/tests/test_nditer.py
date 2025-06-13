@@ -2,10 +2,10 @@ import subprocess
 import sys
 import textwrap
 
-import numpy._core._multiarray_tests as _multiarray_tests
 import pytest
 
 import numpy as np
+import numpy._core._multiarray_tests as _multiarray_tests
 import numpy._core.umath as ncu
 from numpy import all, arange, array, nditer
 from numpy.testing import (
@@ -1486,7 +1486,7 @@ def test_iter_copy_casts_structured2():
     # Array of two structured scalars:
     for res in res1, res2:
         # Cast to tuple by getitem, which may be weird and changeable?:
-        assert type(res["a"][0]) == tuple
+        assert isinstance(res["a"][0], tuple)
         assert res["a"][0] == (1, 1)
 
     for res in res1, res2:
