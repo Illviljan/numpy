@@ -4,13 +4,13 @@ import pickle
 import sys
 import warnings
 
-import numpy._core._operand_flag_tests as opflag_tests
-import numpy._core._rational_tests as _rational_tests
-import numpy._core._umath_tests as umt
 import pytest
 from pytest import param
 
 import numpy as np
+import numpy._core._operand_flag_tests as opflag_tests
+import numpy._core._rational_tests as _rational_tests
+import numpy._core._umath_tests as umt
 import numpy._core.umath as ncu
 import numpy.linalg._umath_linalg as uml
 from numpy.exceptions import AxisError
@@ -2123,9 +2123,9 @@ class TestUfunc:
         class ArrayPriorityMinus2000(ArrayPriorityBase):
             __array_priority__ = -2000
 
-        x = ArrayPriorityMinus1000(2)
-        xb = ArrayPriorityMinus1000b(2)
-        y = ArrayPriorityMinus2000(2)
+        x = np.ones(2).view(ArrayPriorityMinus1000)
+        xb = np.ones(2).view(ArrayPriorityMinus1000b)
+        y = np.ones(2).view(ArrayPriorityMinus2000)
 
         assert np.add(x, y) is ArrayPriorityMinus1000
         assert np.add(y, x) is ArrayPriorityMinus1000

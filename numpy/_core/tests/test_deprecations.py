@@ -6,18 +6,12 @@ to document how deprecations should eventually be turned into errors.
 import contextlib
 import warnings
 
-import numpy._core._struct_ufunc_tests as struct_ufunc
 import pytest
-from numpy._core._multiarray_tests import fromstring_null_term_c_api  # noqa: F401
 
 import numpy as np
+import numpy._core._struct_ufunc_tests as struct_ufunc
+from numpy._core._multiarray_tests import fromstring_null_term_c_api  # noqa: F401
 from numpy.testing import assert_raises, temppath
-
-try:
-    import pytz  # noqa: F401
-    _has_pytz = True
-except ImportError:
-    _has_pytz = False
 
 
 class _DeprecationTestCase:
@@ -411,6 +405,13 @@ class TestDeprecatedArrayWrap(_DeprecationTestCase):
         assert test1.called
         self.assert_deprecated(lambda: np.negative(test2))
         assert test2.called
+
+class TestDeprecatedArrayAttributeSetting(_DeprecationTestCase):
+    message = "Setting the .*on a NumPy array has been deprecated.*"
+
+    def test_deprecated_strides_set(self):
+        x = np.eye(2)
+        self.assert_deprecated(setattr, args=(x, 'strides', x.strides))
 
 
 class TestDeprecatedDTypeParenthesizedRepeatCount(_DeprecationTestCase):

@@ -9,11 +9,11 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hynp
-from numpy._core._rational_tests import rational
 
 import numpy as np
 from numpy import ma
 from numpy._core import sctypes
+from numpy._core._rational_tests import rational
 from numpy._core.numerictypes import obj2sctype
 from numpy.exceptions import AxisError
 from numpy.random import rand, randint, randn
@@ -78,6 +78,13 @@ class TestResize:
         new_shape = (-10, -1)
         with pytest.raises(ValueError, match=r"negative"):
             np.resize(A, new_shape=new_shape)
+
+    def test_unsigned_resize(self):
+        # ensure unsigned integer sizes don't lead to underflows
+        for dt_pair in [(np.int32, np.uint32), (np.int64, np.uint64)]:
+            arr = np.array([[23, 95], [66, 37]])
+            assert_array_equal(np.resize(arr, dt_pair[0](1)),
+                               np.resize(arr, dt_pair[1](1)))
 
     def test_subclass(self):
         class MyArray(np.ndarray):
@@ -3212,6 +3219,24 @@ class TestIsclose:
         assert np.isclose(a, a, atol=np.timedelta64(1, "ns"), equal_nan=True).all()
         assert np.allclose(a, a, atol=0, equal_nan=True)
         assert np.allclose(a, a, atol=np.timedelta64(1, "ns"), equal_nan=True)
+
+    def test_tol_warnings(self):
+        a = np.array([1, 2, 3])
+        b = np.array([np.inf, np.nan, 1])
+
+        for i in b:
+            for j in b:
+                # Making sure that i and j are not both numbers, because that won't create a warning
+                if (i == 1) and (j == 1):
+                    continue
+
+                with warnings.catch_warnings(record=True) as w:
+
+                    warnings.simplefilter("always")
+                    c = np.isclose(a, a, atol=i, rtol=j)
+                    assert len(w) == 1
+                    assert issubclass(w[-1].category, RuntimeWarning)
+                    assert f"One of rtol or atol is not valid, atol: {i}, rtol: {j}" in str(w[-1].message)
 
 
 class TestStdVar:

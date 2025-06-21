@@ -1117,6 +1117,7 @@ src_multiarray_umath_common = [
 ]
 if have_blas
   src_multiarray_umath_common += [
+    'src/common/blas_utils.c',
     'src/common/cblasfuncs.c',
     'src/common/python_xerbla.c',
   ]
@@ -1206,6 +1207,7 @@ src_multiarray = multiarray_gen_headers + [
   # Remove this `arm64_exports.c` file once scipy macos arm64 build correctly
   # links to the arm64 npymath library, see gh-22673
   'src/npymath/arm64_exports.c',
+  'src/multiarray/fnv.c',
 ]
 
 src_umath = umath_gen_headers + [

@@ -2,10 +2,10 @@ import subprocess
 import sys
 import textwrap
 
-import numpy._core._multiarray_tests as _multiarray_tests
 import pytest
 
 import numpy as np
+import numpy._core._multiarray_tests as _multiarray_tests
 import numpy._core.umath as ncu
 from numpy import all, arange, array, nditer
 from numpy.testing import (
@@ -858,7 +858,7 @@ def test_iter_nbo_align_contig():
 
     # Unaligned input
     a = np.zeros((6 * 4 + 1,), dtype='i1')[1:]
-    a.dtype = 'f4'
+    a = a.view('f4')
     a[:] = np.arange(6, dtype='f4')
     assert_(not a.flags.aligned)
     # Without 'aligned', shouldn't copy
@@ -1486,7 +1486,7 @@ def test_iter_copy_casts_structured2():
     # Array of two structured scalars:
     for res in res1, res2:
         # Cast to tuple by getitem, which may be weird and changeable?:
-        assert type(res["a"][0]) == tuple
+        assert isinstance(res["a"][0], tuple)
         assert res["a"][0] == (1, 1)
 
     for res in res1, res2:
@@ -1803,7 +1803,7 @@ def test_iter_buffering():
     arrays.append(np.arange(10, dtype='f4'))
     # Unaligned array
     a = np.zeros((4 * 16 + 1,), dtype='i1')[1:]
-    a.dtype = 'i4'
+    a = a.view('i4')
     a[:] = np.arange(16, dtype='i4')
     arrays.append(a)
     # 4-D F-order array
